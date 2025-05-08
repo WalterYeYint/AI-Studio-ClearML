@@ -34,4 +34,8 @@ jobs:
 
       - name: Run pipeline
         run: |
+#          clearml-agent daemon --queue "task" --detached
+#          python main.py
           python s1_dataset_artifact.py
+
+          

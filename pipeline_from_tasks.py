@@ -30,7 +30,7 @@ def run_pipeline():
     pipe = PipelineController(
         name="AI_Studio_Pipeline_Demo", project="AI_Studio_Demo", version="0.0.1", add_pipeline_tags=False
     )
-    #
+
     # pipe.add_parameter(
     #     "url",
     #     "dataset_url",
@@ -72,9 +72,9 @@ def run_pipeline():
     )
 
     # for debugging purposes use local jobs
-    # pipe.start_locally()
+    pipe.start_locally()
 
     # Starting the pipeline (in the background)
     # pipe.start(queue="task")
-    pipe.start(queue="pipeline_controller")
-    print("done")
+    # pipe.start(queue="pipeline_controller")
+    # print("done")

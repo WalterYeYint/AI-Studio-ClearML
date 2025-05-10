@@ -1,80 +1,107 @@
 from clearml import Task
 from clearml.automation import PipelineController
+import logging
 # import os
 # os.environ["CLEARML_API_ACCESS_KEY"] = os.getenv("CLEARML_API_ACCESS_KEY")
 # os.environ["CLEARML_API_SECRET_KEY"] = os.getenv("CLEARML_API_SECRET_KEY")
 # os.environ["CLEARML_API_HOST"] = os.getenv("CLEARML_API_HOST")
 
-def pre_execute_callback_example(a_pipeline, a_node, current_param_override):
-    # type (PipelineController, PipelineController.Node, dict) -> bool
-    print(
-        "Cloning Task id={} with parameters: {}".format(
-            a_node.base_task_id, current_param_override
-        )
-    )
-    # if we want to skip this node (and subtree of this node) we return False
-    # return True to continue DAG execution
-    return True
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-
-def post_execute_callback_example(a_pipeline, a_node):
-    # type (PipelineController, PipelineController.Node) -> None
-    print("Completed Task id={}".format(a_node.executed))
-    # if we need the actual executed Task: Task.get_task(task_id=a_node.executed)
-    return
-
+# Queue configuration - using same queue for everything
+EXECUTION_QUEUE = "pipeline"
 
 def run_pipeline():
-    # Connecting ClearML with the current pipeline,
-    # from here on everything is logged automatically
+    # Connecting ClearML with the current pipeline
     pipe = PipelineController(
-        name="AI_Studio_Pipeline_Demo", project="AI_Studio_Demo", version="0.0.1", add_pipeline_tags=False
+        name="AI_Studio_Pipeline_Demo", 
+        project="AI_Studio_Demo", 
+        version="0.0.1", 
+        add_pipeline_tags=False
     )
 
-    # pipe.add_parameter(
-    #     "url",
-    #     "dataset_url",
-    # )
+    # Set default queue for pipeline control
+    pipe.set_default_execution_queue(EXECUTION_QUEUE)
+    logger.info(f"Set default execution queue to: {EXECUTION_QUEUE}")
 
-    # pipe.add_parameter(
-    #     name="url",
-    #     default="https://files.clear.ml/AI_Studio_Demo/Pipeline%20step%202%20process%20dataset.d69cec0ccc5a4c6b8900e61489b01847/artifacts/X_test/X_test.npz",
-    #     description="URL of the dataset"
-    # )
-
-    pipe.set_default_execution_queue("task")
-
+    # Add dataset creation step
     pipe.add_step(
         name="stage_data",
         base_task_project="AI_Studio_Demo",
         base_task_name="Pipeline step 1 dataset artifact",
-        # parameter_override={"General/dataset_url": "${pipeline.url}"},
+        execution_queue=EXECUTION_QUEUE
     )
 
+    # Add dataset processing step
     pipe.add_step(
         name="stage_process",
         parents=["stage_data"],
         base_task_project="AI_Studio_Demo",
         base_task_name="Pipeline step 2 process dataset",
+        execution_queue=EXECUTION_QUEUE,
         parameter_override={
             "General/dataset_task_id": "${stage_data.id}",
             "General/test_size": 0.25,
             "General/random_state": 42
-        },
+        }
     )
 
+    # Add initial training step
     pipe.add_step(
         name="stage_train",
         parents=["stage_process"],
         base_task_project="AI_Studio_Demo",
         base_task_name="Pipeline step 3 train model",
-        parameter_override={"General/dataset_task_id": "${stage_process.id}"},
+        execution_queue=EXECUTION_QUEUE,
+        parameter_override={
+            "General/processed_dataset_id": "${stage_process.parameters.General/processed_dataset_id}",
+            "General/test_queue": EXECUTION_QUEUE,
+            "General/num_epochs": 20,
+            "General/batch_size": 16,
+            "General/learning_rate": 1e-3,
+            "General/weight_decay": 1e-5
+        }
     )
 
-    # for debugging purposes use local jobs
-    pipe.start_locally()
+    # Add HPO step
+    pipe.add_step(
+        name="stage_hpo",
+        parents=["stage_train", "stage_process", "stage_data"],
+        base_task_project="AI_Studio_Demo",
+        base_task_name="HPO: Train Model",
+        execution_queue=EXECUTION_QUEUE,
+        parameter_override={
+            "General/processed_dataset_id": "${stage_process.parameters.General/processed_dataset_id}",
+            "General/test_queue": EXECUTION_QUEUE,
+            "General/num_trials": 4,
+            "General/time_limit_minutes": 20,
+            "General/run_as_service": False,
+            "General/dataset_task_id": "${stage_data.id}",
+            "General/base_train_task_id": "${stage_train.id}"
+        }
+    )
 
-    # Starting the pipeline (in the background)
-    # pipe.start(queue="task")
-    # pipe.start(queue="pipeline_controller")
-    # print("done")
+    # Add final model training step
+    pipe.add_step(
+        name="stage_final_model",
+        parents=["stage_hpo", "stage_process"],
+        base_task_project="AI_Studio_Demo",
+        base_task_name="Final Model Training",
+        execution_queue=EXECUTION_QUEUE,
+        parameter_override={
+            "General/processed_dataset_id": "${stage_process.parameters.General/processed_dataset_id}",
+            "General/hpo_task_id": "${stage_hpo.id}",
+            "General/test_queue": EXECUTION_QUEUE
+        }
+    )
+
+    # Start the pipeline locally but tasks will run on queue
+    logger.info("Starting pipeline locally with tasks on queue: %s", EXECUTION_QUEUE)
+    pipe.start_locally()
+    logger.info("Pipeline started successfully")
+
+
+if __name__ == "__main__":
+    run_pipeline()
